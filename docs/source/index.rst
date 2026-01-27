@@ -1,4 +1,4 @@
-Welcome to {{PROJECT_NAME}}'s documentation!
+Welcome to ds-protocol-soap-py-lib's documentation!
 =============================================
 
 .. toctree::
