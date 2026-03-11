@@ -38,6 +38,7 @@ Example:
     >>> data = dataset.output
 """
 
+import builtins
 from dataclasses import dataclass, field
 from typing import Any, Generic, NoReturn, TypeVar
 
@@ -122,6 +123,44 @@ class SoapDataset(
     def type(self) -> ResourceType:
         return ResourceType.DATASET
 
+    def _invoke_method(self, error_cls: builtins.type[ReadError | CreateError]) -> pd.DataFrame | None:
+        """
+        Call the configured SOAP method and return a deserialized DataFrame.
+
+        Returns ``None`` if the SOAP response is empty.
+
+        Args:
+            error_cls: The error class to raise on failure (``ReadError`` or ``CreateError``).
+
+        Raises:
+            ReadError | CreateError: If the SOAP call fails or no deserializer is configured.
+        """
+        auth_params = self.linked_service.body_auth_params or {}
+
+        try:
+            method = getattr(self.linked_service.connection.service, self.settings.method)
+            response = method(**auth_params, **self.settings.kwargs)
+        except Exception as exc:
+            logger.exception("SOAP call failed")
+            raise error_cls(
+                message=f"SOAP call failed for method {self.settings.method}: {exc}",
+                details={"type": self.type.value, "method": self.settings.method},
+            ) from exc
+
+        serialized = serialize_object(response)  # type: ignore[no-untyped-call]
+
+        if not serialized:
+            logger.info(f"SOAP method {self.settings.method} returned empty response")
+            return None
+
+        if not self.deserializer:
+            raise error_cls(
+                message="No deserializer configured for SOAP dataset",
+                details={"type": self.type.value, "method": self.settings.method},
+            )
+
+        return self.deserializer(serialized)
+
     def read(self) -> None:
         """
         Call the configured SOAP method and populate ``self.output``.
@@ -133,32 +172,8 @@ class SoapDataset(
             ReadError: If the SOAP call fails.
         """
         logger.info(f"Calling SOAP method {self.settings.method}")
-
-        auth_params = self.linked_service.body_auth_params or {}
-
-        try:
-            method = getattr(self.linked_service.connection.service, self.settings.method)
-            response = method(**auth_params, **self.settings.kwargs)
-        except Exception as exc:
-            raise ReadError(
-                message=f"SOAP call failed for method {self.settings.method}: {exc}",
-                details={"type": self.type.value, "method": self.settings.method},
-            ) from exc
-
-        serialized = serialize_object(response)  # type: ignore[no-untyped-call]
-
-        if not serialized:
-            logger.info(f"SOAP method {self.settings.method} returned empty response on read operation")
-            self.output = pd.DataFrame()
-            return
-
-        if not self.deserializer:
-            raise ReadError(
-                message="No deserializer configured for SOAP dataset",
-                details={"type": self.type.value, "method": self.settings.method},
-            )
-
-        self.output = self.deserializer(serialized)
+        result = self._invoke_method(ReadError)
+        self.output = result if result is not None else pd.DataFrame()
 
     def create(self) -> None:
         """
@@ -176,33 +191,8 @@ class SoapDataset(
             return
 
         logger.info(f"Calling SOAP method {self.settings.method}")
-
-        auth_params = self.linked_service.body_auth_params or {}
-
-        try:
-            method = getattr(self.linked_service.connection.service, self.settings.method)
-            response = method(**auth_params, **self.settings.kwargs)
-        except Exception as exc:
-            logger.exception("SOAP call failed")
-            raise CreateError(
-                message=f"SOAP call failed for method {self.settings.method}: {exc}",
-                details={"type": self.type.value, "method": self.settings.method},
-            ) from exc
-
-        serialized = serialize_object(response)  # type: ignore[no-untyped-call]
-
-        if not serialized:
-            logger.info(f"SOAP method {self.settings.method} returned empty response on create operation")
-            self.output = self.input.copy()
-            return
-
-        if not self.deserializer:
-            raise CreateError(
-                message="No deserializer configured for SOAP dataset",
-                details={"type": self.type.value, "method": self.settings.method},
-            )
-
-        self.output = self.deserializer(serialized)
+        result = self._invoke_method(CreateError)
+        self.output = result if result is not None else self.input.copy()
 
     def update(self) -> NoReturn:
         raise NotSupportedError("Update operation is not supported for SOAP datasets")

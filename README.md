@@ -1,6 +1,6 @@
 # ds-protocol-soap-py-lib
 
-![Python Versions](https://img.shields.io/badge/python-3.9%20|%203.10%20|%203.11%20|%203.12-blue)
+![Python Versions](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)
 [![PyPI version](https://badge.fury.io/py/ds-protocol-soap-py-lib.svg?kill_cache=1)](https://badge.fury.io/py/ds-protocol-soap-py-lib)
 [![Build Status](https://github.com/grasp-labs/ds-protocol-soap-py-lib/actions/workflows/build.yaml/badge.svg)](https://github.com/grasp-labs/ds-protocol-soap-py-lib/actions/workflows/build.yaml)
 [![codecov](https://codecov.io/gh/grasp-labs/ds-protocol-soap-py-lib/graph/badge.svg?token=EO3YCNCZFS)](https://codecov.io/gh/grasp-labs/ds-protocol-soap-py-lib)

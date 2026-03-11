@@ -20,10 +20,12 @@ import uuid
 from typing import cast
 
 import pytest
+import requests
 from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     ConnectionError,
     LinkedServiceException,
 )
+from requests.auth import HTTPBasicAuth
 
 from ds_protocol_soap_py_lib.enums import AuthType
 from ds_protocol_soap_py_lib.linked_service.soap import (
@@ -100,8 +102,6 @@ def test_connect_basic_sets_http_basic_auth_on_transport(monkeypatch: pytest.Mon
     """
     It configures HTTPBasicAuth on the transport session for Basic auth.
     """
-    from requests.auth import HTTPBasicAuth
-
     service = make_service(
         auth_type=AuthType.BASIC,
         basic=BasicAuthSettings(username="alice", password="secret"),
@@ -187,6 +187,33 @@ def test_connect_parameter_based_raises_if_settings_missing(monkeypatch: pytest.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def test_init_client_raises_connection_error_on_requests_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It raises ConnectionError when zeep.Client raises requests.ConnectionError.
+    """
+
+    service = make_service()
+    monkeypatch.setattr(
+        "ds_protocol_soap_py_lib.linked_service.soap.zeep.Client",
+        lambda **_kwargs: (_ for _ in ()).throw(requests.exceptions.ConnectionError("unreachable")),
+    )
+    with pytest.raises(ConnectionError):
+        service._init_client()
+
+
+def test_init_client_raises_connection_error_on_generic_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It raises ConnectionError when zeep.Client raises an unexpected exception.
+    """
+    service = make_service()
+    monkeypatch.setattr(
+        "ds_protocol_soap_py_lib.linked_service.soap.zeep.Client",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("bad wsdl")),
+    )
+    with pytest.raises(ConnectionError):
+        service._init_client()
+
+
 def test_connect_raises_connection_error_on_wsdl_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     It propagates ConnectionError raised by _init_client when WSDL cannot be fetched.
@@ -237,7 +264,7 @@ def test_connect_clears_client_after_failed_auth_test(monkeypatch: pytest.Monkey
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# test_connection()
+# test_connection
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -292,7 +319,7 @@ def test_test_connection_returns_false_when_not_connected() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# close()
+# close
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -376,6 +403,15 @@ def test_context_manager_closes_on_exception(monkeypatch: pytest.MonkeyPatch) ->
 # ─────────────────────────────────────────────────────────────────────────────
 # body_auth_params
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_body_auth_params_returns_empty_dict_when_parameter_based_settings_missing() -> None:
+    """
+    It returns an empty dict when auth_type is PARAMETER_BASED but parameter_based is None.
+    """
+    service = make_service(auth_type=AuthType.PARAMETER_BASED)
+    service.settings.parameter_based = None
+    assert service.body_auth_params == {}
 
 
 def test_body_auth_params_returns_empty_dict_for_basic_auth() -> None:

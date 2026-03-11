@@ -88,7 +88,7 @@ def make_dataset(
 SAMPLE_DF = pd.DataFrame([{"Id": 1, "Name": "Alice"}, {"Id": 2, "Name": "Bob"}])
 
 # ─────────────────────────────────────────────────────────────────────────────
-# read()
+# read
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -160,6 +160,20 @@ def test_read_injects_parameter_based_auth_params() -> None:
 
     _, call_kwargs = fake_service.calls[0]
     assert call_kwargs["apiKey"] == "my-token"
+
+
+def test_read_raises_read_error_when_deserializer_is_none() -> None:
+    """
+    It raises ReadError when the deserializer is not configured.
+    """
+    response_data = [{"Id": 1}]
+    dataset, _ = make_dataset(
+        method="GetOrders",
+        soap_service=ZeepService(responses={"GetOrders": response_data}),
+    )
+    dataset.deserializer = None
+    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=response_data), pytest.raises(ReadError):
+        dataset.read()
 
 
 def test_read_raises_read_error_on_soap_failure() -> None:
@@ -337,6 +351,21 @@ def test_create_sets_output_to_deserialized_response() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def test_create_raises_create_error_when_deserializer_is_none() -> None:
+    """
+    It raises CreateError when the deserializer is not configured.
+    """
+    response_data = [{"Id": 1, "Status": "created"}]
+    dataset, _ = make_dataset(
+        soap_service=ZeepService(responses={"CreateOrders": response_data}),
+    )
+    dataset.input = SAMPLE_DF
+    dataset.deserializer = None
+    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=response_data):
+        with pytest.raises(CreateError):
+            dataset.create()
+
+
 def test_create_raises_create_error_on_soap_failure() -> None:
     """
     It raises CreateError when the SOAP method raises.
@@ -364,7 +393,7 @@ def test_create_wraps_backend_exception_not_leaking_raw_error() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# close()
+# close
 # ─────────────────────────────────────────────────────────────────────────────
 
 

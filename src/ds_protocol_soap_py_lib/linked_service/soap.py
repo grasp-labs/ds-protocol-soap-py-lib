@@ -227,8 +227,8 @@ class SoapLinkedService(
         settings_config = self.settings.soap_settings or SettingsConfig()
         transport_config = self.settings.transport or TransportConfig()
 
+        session = requests.Session()
         try:
-            session = requests.Session()
             transport = zeep.Transport(  # type: ignore[no-untyped-call]
                 session=session,
                 **dataclasses.asdict(transport_config),
@@ -240,11 +240,13 @@ class SoapLinkedService(
                 settings=zeep_settings,
             )
         except requests.exceptions.ConnectionError as exc:
+            session.close()
             raise ConnectionError(
                 message="Failed to reach the WSDL endpoint",
                 details={"type": self.type.value, "wsdl": self.settings.wsdl},
             ) from exc
         except Exception as exc:
+            session.close()
             raise ConnectionError(
                 message=f"Failed to initialise SOAP client: {exc}",
                 details={"type": self.type.value, "wsdl": self.settings.wsdl},
@@ -331,7 +333,7 @@ class SoapLinkedService(
 
         ok, msg = self.test_connection()
         if not ok:
-            self._client = None
+            self.close()
             raise LinkedServiceException(
                 message=f"Connection test failed: {msg}",
                 details={

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-# import requests
 from zeep.cache import Base
 
 
@@ -9,7 +8,6 @@ class TransportConfig:
     cache: Base | None = None
     timeout: int | float = 300
     operation_timeout: int | float | None = None
-    # session: requests.Session | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
