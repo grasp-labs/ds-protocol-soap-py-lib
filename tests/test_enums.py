@@ -19,16 +19,16 @@ def test_resource_type_values_are_stable() -> None:
     """
     It defines stable string values for resource types.
     """
-    assert ResourceType.LINKED_SERVICE == "DS.RESOURCE.LINKED_SERVICE.SOAP"
-    assert ResourceType.DATASET == "DS.RESOURCE.DATASET.SOAP"
+    assert ResourceType.LINKED_SERVICE == "ds.resource.linked-service.soap"
+    assert ResourceType.DATASET == "ds.resource.dataset.soap"
 
 
 def test_resource_type_is_string_like() -> None:
     """
     It behaves like a string for serialization purposes.
     """
-    assert str(ResourceType.DATASET) == "DS.RESOURCE.DATASET.SOAP"
-    assert str(ResourceType.LINKED_SERVICE) == "DS.RESOURCE.LINKED_SERVICE.SOAP"
+    assert str(ResourceType.DATASET) == "ds.resource.dataset.soap"
+    assert str(ResourceType.LINKED_SERVICE) == "ds.resource.linked-service.soap"
 
 
 def test_auth_type_values_are_stable() -> None:

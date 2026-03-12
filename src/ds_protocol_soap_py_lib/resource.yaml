@@ -11,7 +11,7 @@ dataset:
 
 linked_service:
   - name: SOAP
-    type: ds.resource.linked_service.soap
+    type: ds.resource.linked-service.soap
     version: 1.0.0
     description: SOAP linked service
     class_name: ds_protocol_soap_py_lib.linked_service.soap.SoapLinkedService

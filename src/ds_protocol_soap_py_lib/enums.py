@@ -6,9 +6,9 @@ Constants for SOAP protocol.
 
 Example:
     >>> ResourceType.LINKED_SERVICE
-    'DS.RESOURCE.LINKED_SERVICE.SOAP'
+    'ds.resource.linked-service.soap'
     >>> ResourceType.DATASET
-    'DS.RESOURCE.DATASET.SOAP'
+    'ds.resource.dataset.soap'
 """
 
 from enum import StrEnum
@@ -28,5 +28,5 @@ class ResourceType(StrEnum):
     Constants for SOAP protocol.
     """
 
-    LINKED_SERVICE = "DS.RESOURCE.LINKED_SERVICE.SOAP"
-    DATASET = "DS.RESOURCE.DATASET.SOAP"
+    LINKED_SERVICE = "ds.resource.linked-service.soap"
+    DATASET = "ds.resource.dataset.soap"
