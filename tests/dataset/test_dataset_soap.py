@@ -361,9 +361,8 @@ def test_create_raises_create_error_when_deserializer_is_none() -> None:
     )
     dataset.input = SAMPLE_DF
     dataset.deserializer = None
-    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=response_data):
-        with pytest.raises(CreateError):
-            dataset.create()
+    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=response_data), pytest.raises(CreateError):
+        dataset.create()
 
 
 def test_create_raises_create_error_on_soap_failure() -> None:
