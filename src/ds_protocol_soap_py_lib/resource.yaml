@@ -1,0 +1,17 @@
+package-name: soap
+name: soap
+description: SOAP protocol for the DS Business Workflow
+
+dataset:
+  - name: SOAP
+    type: ds.resource.dataset.soap
+    version: 1.0.0
+    description: SOAP dataset
+    class_name: ds_protocol_soap_py_lib.dataset.soap.SoapDataset
+
+linked_service:
+  - name: SOAP
+    type: ds.resource.linked-service.soap
+    version: 1.0.0
+    description: SOAP linked service
+    class_name: ds_protocol_soap_py_lib.linked_service.soap.SoapLinkedService

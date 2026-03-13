@@ -16,8 +16,8 @@ and standards for contributing to DS Python Library packages.
 2. **Clone your fork**:
 
    ```bash
-   git clone https://github.com/grasp-labs/{{GITHUB_REPO}}.git
-   cd {{GITHUB_REPO}}
+   git clone https://github.com/grasp-labs/ds-protocol-soap-py-lib.git
+   cd ds-protocol-soap-py-lib
    ```
 
 3. **Set up development environment**:
@@ -163,22 +163,24 @@ def process_data(data: list[str], threshold: float = 0.5) -> dict[str, int]:
 
 ```python
 """
-File: test_example.py
-Description: Tests for example module
+File: test_dataset_soap.py
+Description: Tests for SoapDataset
 """
 
+import uuid
 import pytest
-from {{PYTHON_MODULE_NAME}}.example import example_function
+from ds_protocol_soap_py_lib.dataset.soap import SoapDataset, SoapDatasetSettings
+from ds_protocol_soap_py_lib.linked_service.soap import SoapLinkedService, SoapLinkedServiceSettings
+from ds_protocol_soap_py_lib.enums import AuthType
 
 
-def test_example_function_basic() -> None:
-    """Test basic functionality of example_function."""
-    result = example_function(1, "test")
-    assert result is True
+def test_read_populates_output() -> None:
+    """SoapDataset.read() deserializes the SOAP response into a DataFrame."""
+    # Test implementation
 
 
-def test_example_function_edge_cases() -> None:
-    """Test edge cases."""
+def test_read_raises_on_soap_failure() -> None:
+    """SoapDataset.read() raises ReadError when the SOAP method raises."""
     # Test implementation
 ```
 
