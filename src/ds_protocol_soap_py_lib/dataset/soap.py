@@ -149,7 +149,7 @@ class SoapDataset(
 
         serialized = serialize_object(response)  # type: ignore[no-untyped-call]
 
-        if not serialized:
+        if serialized is None:
             logger.info(f"SOAP method {self.settings.method} returned empty response")
             return None
 
@@ -168,7 +168,7 @@ class SoapDataset(
         logger.info(f"Calling SOAP method {self.settings.method}")
         serialized = self._invoke_method(ReadError)
 
-        if not serialized:
+        if serialized is None:
             self.output = pd.DataFrame()
             return
 
@@ -198,7 +198,7 @@ class SoapDataset(
         logger.info(f"Calling SOAP method {self.settings.method}")
         serialized = self._invoke_method(CreateError)
 
-        if not serialized or not self.deserializer:
+        if serialized is None or not self.deserializer:
             self.output = self.input.copy()
             return
 

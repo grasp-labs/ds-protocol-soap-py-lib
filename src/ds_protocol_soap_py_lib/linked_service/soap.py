@@ -28,12 +28,12 @@ Example:
     >>> linked_service.connect()
 """
 
-import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
 import requests
 import zeep
+from ds_common_logger_py_lib import Logger
 from ds_resource_plugin_py_lib.common.resource.linked_service import (
     LinkedService,
     LinkedServiceSettings,
@@ -43,9 +43,11 @@ from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     LinkedServiceException,
 )
 from requests.auth import HTTPBasicAuth
+from zeep.cache import Base
 
 from ..enums import AuthType, ResourceType
-from .config import SettingsConfig, TransportConfig
+
+logger = Logger.get_logger(__name__, package=True)
 
 
 @dataclass(kw_only=True)
@@ -117,11 +119,13 @@ class SoapLinkedServiceSettings(LinkedServiceSettings):
     auth_type: AuthType
     """The authentication type to use."""
 
-    auth_test_method: str
+    auth_test_method: str | None = None
     """
     The SOAP operation name used to verify the connection during ``connect()``
     and ``test_connection()``. Authentication in SOAP happens at call time, so
     a real method must be invoked to verify credentials.
+    When ``None``, the connection test is skipped and credentials are not verified
+    until the first real call.
     """
 
     auth_test_method_params: dict[str, Any] = field(default_factory=dict)
@@ -137,12 +141,43 @@ class SoapLinkedServiceSettings(LinkedServiceSettings):
     parameter_based: ParameterBasedAuthSettings | None = None
     """Settings for parameter-based authentication. Required when auth_type=AuthType.PARAMETER_BASED."""
 
-    # Client-related settings (optional overrides)
-    soap_settings: SettingsConfig | None = None
-    """Optional zeep Settings overrides. Defaults to SettingsConfig()."""
+    # Transport settings
+    cache: Base | None = None
+    """Optional zeep cache backend. Defaults to no cache."""
 
-    transport: TransportConfig | None = None
-    """Optional zeep Transport overrides. Defaults to TransportConfig()."""
+    timeout: int | float = 300
+    """Timeout in seconds for WSDL loading and SOAP calls. Defaults to 300."""
+
+    operation_timeout: int | float | None = None
+    """Timeout in seconds for individual SOAP operations. Defaults to ``timeout``."""
+
+    # zeep Settings
+    strict: bool = True
+    """Raise errors on WSDL non-conformance. Defaults to True."""
+
+    raw_response: bool = False
+    """Return the raw requests response instead of parsed objects. Defaults to False."""
+
+    forbid_dtd: bool = False
+    """Forbid DTD in XML responses. Defaults to False."""
+
+    forbid_entities: bool = True
+    """Forbid external entity references in XML. Defaults to True."""
+
+    forbid_external: bool = True
+    """Forbid external resource access in XML. Defaults to True."""
+
+    xml_huge_tree: bool = False
+    """Enable lxml huge_tree option for very large XML responses. Defaults to False."""
+
+    force_https: bool = True
+    """Require HTTPS for SOAP calls. Defaults to True."""
+
+    extra_http_headers: dict[str, str] | None = None
+    """Additional HTTP headers to include in every request. Defaults to None."""
+
+    xsd_ignore_sequence_order: bool = False
+    """Ignore XSD sequence ordering constraints. Defaults to False."""
 
 
 SoapLinkedServiceSettingsType = TypeVar(
@@ -224,16 +259,25 @@ class SoapLinkedService(
         Raises:
             ConnectionError: If the WSDL cannot be reached or parsed.
         """
-        settings_config = self.settings.soap_settings or SettingsConfig()
-        transport_config = self.settings.transport or TransportConfig()
-
         session = requests.Session()
         try:
             transport = zeep.Transport(  # type: ignore[no-untyped-call]
                 session=session,
-                **dataclasses.asdict(transport_config),
+                cache=self.settings.cache,
+                timeout=self.settings.timeout,
+                operation_timeout=self.settings.operation_timeout,
             )
-            zeep_settings = zeep.Settings(**dataclasses.asdict(settings_config))
+            zeep_settings = zeep.Settings(
+                strict=self.settings.strict,
+                raw_response=self.settings.raw_response,
+                forbid_dtd=self.settings.forbid_dtd,
+                forbid_entities=self.settings.forbid_entities,
+                forbid_external=self.settings.forbid_external,
+                xml_huge_tree=self.settings.xml_huge_tree,
+                force_https=self.settings.force_https,
+                extra_http_headers=self.settings.extra_http_headers,
+                xsd_ignore_sequence_order=self.settings.xsd_ignore_sequence_order,
+            )
             return zeep.Client(  # type: ignore[no-untyped-call]
                 wsdl=self.settings.wsdl,
                 transport=transport,
@@ -309,6 +353,7 @@ class SoapLinkedService(
             LinkedServiceException: If auth settings are missing, auth_type is unsupported,
                 or the connection test call fails (wrong credentials, method, or parameters).
         """
+        self.close()
         client = self._init_client()
 
         handlers: dict[str, Any] = {
@@ -331,6 +376,13 @@ class SoapLinkedService(
 
         self._client = client
 
+        if self.settings.auth_test_method is None:
+            logger.warning(
+                "No auth_test_method configured, skipping connection test."
+                "Credentials will not be verified until first dataset operation."
+            )
+            return
+
         ok, msg = self.test_connection()
         if not ok:
             self.close()
@@ -349,10 +401,14 @@ class SoapLinkedService(
         Verify the connection to the SOAP API by calling ``auth_test_method``.
 
         Does not raise on failure — returns ``(False, reason)`` instead.
+        Returns ``(False, "No auth_test_method configured")`` if ``auth_test_method`` is not set.
 
         Returns:
             tuple[bool, str]: ``(True, "")`` on success, ``(False, reason)`` on failure.
         """
+        if not self.settings.auth_test_method:
+            return False, "No auth_test_method configured"
+
         try:
             method = getattr(
                 self.connection.service,

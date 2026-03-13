@@ -45,7 +45,7 @@ def make_service(
     auth_type: AuthType = AuthType.BASIC,
     basic: BasicAuthSettings | None = None,
     parameter_based: ParameterBasedAuthSettings | None = None,
-    auth_test_method: str = "Ping",
+    auth_test_method: str | None = "Ping",
 ) -> SoapLinkedService:
     if auth_type == AuthType.BASIC and basic is None:
         basic = BasicAuthSettings(username="user", password="pass")
@@ -263,6 +263,34 @@ def test_connect_clears_client_after_failed_auth_test(monkeypatch: pytest.Monkey
     assert service._client is None
 
 
+def test_connect_skips_auth_test_when_auth_test_method_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It does not call test_connection() when auth_test_method is None.
+    """
+    service = make_service(auth_test_method=None)
+    fake_client = ZeepClientStub()
+    monkeypatch.setattr(service, "_init_client", lambda: fake_client)
+    service.connect()
+    assert service._client is fake_client
+
+
+def test_connect_closes_previous_session_on_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It closes the previous client's session before creating a new one to avoid leaking HTTP sessions.
+    """
+    service = make_service()
+    first_client = ZeepClientStub()
+    second_client = ZeepClientStub()
+    clients = iter([first_client, second_client])
+    monkeypatch.setattr(service, "_init_client", lambda: next(clients))
+
+    service.connect()
+    service.connect()
+
+    assert first_client.transport.session.closed is True
+    assert service._client is second_client
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # test_connection
 # ─────────────────────────────────────────────────────────────────────────────
@@ -316,6 +344,16 @@ def test_test_connection_returns_false_when_not_connected() -> None:
     ok, msg = service.test_connection()
     assert ok is False
     assert msg != ""
+
+
+def test_test_connection_returns_false_when_auth_test_method_is_none() -> None:
+    """
+    It returns (False, reason) when auth_test_method is not configured.
+    """
+    service = make_service(auth_test_method=None)
+    ok, msg = service.test_connection()
+    assert ok is False
+    assert msg == "No auth_test_method configured"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

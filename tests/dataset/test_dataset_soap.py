@@ -123,6 +123,25 @@ def test_read_sets_output_to_empty_dataframe_on_empty_response() -> None:
     assert dataset.output.empty
 
 
+@pytest.mark.parametrize("falsy_payload", [[], {}])
+def test_read_sets_output_to_empty_dataframe_when_serialized_is_empty_collection(
+    falsy_payload: list | dict,
+) -> None:
+    """
+    It produces an empty DataFrame when serialize_object returns [] or {}.
+    Ensures falsy-but-not-None payloads are not silently treated as missing.
+    """
+    dataset, _ = make_dataset(
+        method="GetOrders",
+        soap_service=ZeepService(responses={"GetOrders": falsy_payload}),
+    )
+    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=falsy_payload):
+        dataset.read()
+
+    assert isinstance(dataset.output, pd.DataFrame)
+    assert dataset.output.empty
+
+
 def test_read_forwards_kwargs_to_soap_method() -> None:
     """
     It passes settings.kwargs to the SOAP method call.
@@ -327,6 +346,25 @@ def test_create_sets_output_to_input_copy_on_empty_response() -> None:
 
     pd.testing.assert_frame_equal(dataset.output, SAMPLE_DF)
     assert dataset.output is not dataset.input
+
+
+@pytest.mark.parametrize("falsy_payload", [[], {}])
+def test_create_sets_output_to_deserialized_empty_dataframe_when_serialized_is_empty_collection(
+    falsy_payload: list | dict,
+) -> None:
+    """
+    It produces an empty DataFrame when serialize_object returns [] or {}.
+    Ensures falsy-but-not-None payloads are not silently treated as missing.
+    """
+    dataset, _ = make_dataset(
+        soap_service=ZeepService(responses={"CreateOrders": falsy_payload}),
+    )
+    dataset.input = SAMPLE_DF
+    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=falsy_payload):
+        dataset.create()
+
+    assert isinstance(dataset.output, pd.DataFrame)
+    assert dataset.output.empty
 
 
 def test_create_sets_output_to_deserialized_response() -> None:
