@@ -351,9 +351,9 @@ def test_create_sets_output_to_deserialized_response() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_create_raises_create_error_when_deserializer_is_none() -> None:
+def test_create_sets_output_to_input_copy_when_deserializer_is_none() -> None:
     """
-    It raises CreateError when the deserializer is not configured.
+    It sets output to a copy of input when no deserializer is configured.
     """
     response_data = [{"Id": 1, "Status": "created"}]
     dataset, _ = make_dataset(
@@ -361,8 +361,11 @@ def test_create_raises_create_error_when_deserializer_is_none() -> None:
     )
     dataset.input = SAMPLE_DF
     dataset.deserializer = None
-    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=response_data), pytest.raises(CreateError):
+    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=response_data):
         dataset.create()
+
+    pd.testing.assert_frame_equal(dataset.output, SAMPLE_DF)
+    assert dataset.output is not dataset.input
 
 
 def test_create_raises_create_error_on_soap_failure() -> None:

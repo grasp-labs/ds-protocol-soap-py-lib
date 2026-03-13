@@ -123,9 +123,9 @@ class SoapDataset(
     def type(self) -> ResourceType:
         return ResourceType.DATASET
 
-    def _invoke_method(self, error_cls: builtins.type[ReadError | CreateError]) -> pd.DataFrame | None:
+    def _invoke_method(self, error_cls: builtins.type[ReadError | CreateError]) -> Any:
         """
-        Call the configured SOAP method and return a deserialized DataFrame.
+        Call the configured SOAP method and return the serialized response.
 
         Returns ``None`` if the SOAP response is empty.
 
@@ -133,7 +133,7 @@ class SoapDataset(
             error_cls: The error class to raise on failure (``ReadError`` or ``CreateError``).
 
         Raises:
-            ReadError | CreateError: If the SOAP call fails or no deserializer is configured.
+            ReadError | CreateError: If the SOAP call fails.
         """
         auth_params = self.linked_service.body_auth_params or {}
 
@@ -153,13 +153,7 @@ class SoapDataset(
             logger.info(f"SOAP method {self.settings.method} returned empty response")
             return None
 
-        if not self.deserializer:
-            raise error_cls(
-                message="No deserializer configured for SOAP dataset",
-                details={"type": self.type.value, "method": self.settings.method},
-            )
-
-        return self.deserializer(serialized)
+        return serialized
 
     def read(self) -> None:
         """
@@ -169,11 +163,22 @@ class SoapDataset(
         ``zeep.helpers.serialize_object`` and normalised into a DataFrame.
 
         Raises:
-            ReadError: If the SOAP call fails.
+            ReadError: If the SOAP call fails or no deserializer is configured.
         """
         logger.info(f"Calling SOAP method {self.settings.method}")
-        result = self._invoke_method(ReadError)
-        self.output = result if result is not None else pd.DataFrame()
+        serialized = self._invoke_method(ReadError)
+
+        if not serialized:
+            self.output = pd.DataFrame()
+            return
+
+        if not self.deserializer:
+            raise ReadError(
+                message="No deserializer configured for SOAP dataset",
+                details={"type": self.type.value, "method": self.settings.method},
+            )
+
+        self.output = self.deserializer(serialized)
 
     def create(self) -> None:
         """
@@ -182,7 +187,7 @@ class SoapDataset(
         Returns immediately if ``self.input`` is empty (no-op).
         Calls the SOAP method with auth params and ``settings.kwargs``.
         Sets ``self.output`` to the deserialized backend response, or a
-        copy of ``self.input`` if the method returns nothing.
+        copy of ``self.input`` if the response is empty or no deserializer is configured.
 
         Raises:
             CreateError: If the SOAP call fails.
@@ -191,8 +196,13 @@ class SoapDataset(
             return
 
         logger.info(f"Calling SOAP method {self.settings.method}")
-        result = self._invoke_method(CreateError)
-        self.output = result if result is not None else self.input.copy()
+        serialized = self._invoke_method(CreateError)
+
+        if not serialized or not self.deserializer:
+            self.output = self.input.copy()
+            return
+
+        self.output = self.deserializer(serialized)
 
     def update(self) -> NoReturn:
         raise NotSupportedError("Update operation is not supported for SOAP datasets")
