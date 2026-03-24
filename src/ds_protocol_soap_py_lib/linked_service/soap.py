@@ -6,22 +6,33 @@ SOAP Linked Service
 
 This module implements a linked service for SOAP APIs.
 
+Three authentication types are supported:
+
+- ``AuthType.BASIC`` — HTTP Basic Auth on the transport.
+- ``AuthType.BASIC_WITH_TOKEN_EXCHANGE`` — HTTP Basic Auth used to call a SOAP method
+  on a dedicated auth WSDL, exchanging credentials for a session token. The token is
+  then injected as a keyword argument into all subsequent data calls.
+- ``AuthType.PARAMETER_BASED`` — credentials passed as SOAP body parameters per call.
+
 Example:
     >>> import uuid
     >>> from ds_protocol_soap_py_lib import SoapLinkedService, SoapLinkedServiceSettings
-    >>> from ds_protocol_soap_py_lib.linked_service.soap import BasicAuthSettings
+    >>> from ds_protocol_soap_py_lib.linked_service.soap import BasicWithTokenExchangeAuthSettings
     >>> from ds_protocol_soap_py_lib.enums import AuthType
     >>> linked_service = SoapLinkedService(
     ...     id=uuid.uuid4(),
     ...     name="example::linked_service",
     ...     version="1.0.0",
     ...     settings=SoapLinkedServiceSettings(
-    ...         wsdl="https://api.example.com?WSDL",
-    ...         auth_type=AuthType.BASIC,
-    ...         auth_test_method="SomeHealthCheckMethod",
-    ...         basic=BasicAuthSettings(
+    ...         wsdl="https://ws.example.com/Data.asmx?WSDL",
+    ...         auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+    ...         auth_test_method="Ping",
+    ...         basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+    ...             auth_wsdl="https://ws.example.com/Auth.asmx?WSDL",
     ...             username="user",
     ...             password="pass",
+    ...             auth_method="LogonKey",
+    ...             credential_param_key="sKey",
     ...         ),
     ...     ),
     ... )
@@ -67,6 +78,40 @@ class BasicAuthSettings:
 
 
 @dataclass(kw_only=True)
+class BasicWithTokenExchangeAuthSettings:
+    """
+    Settings for Basic + token exchange authentication.
+
+    Uses HTTP Basic Auth to call a SOAP method on a dedicated auth WSDL,
+    exchanging credentials for a session token. The token is stored internally
+    in ``SoapLinkedService`` after ``connect()`` and injected automatically
+    as a keyword argument in all subsequent data calls via ``body_auth_params``.
+    """
+
+    auth_wsdl: str
+    """The WSDL endpoint used solely for the credential exchange call."""
+
+    username: str
+    """The username passed to the credential exchange call."""
+
+    password: str = field(metadata={"mask": True})
+    """The password passed to the credential exchange call."""
+
+    auth_method: str
+    """The SOAP operation name to call to retrieve the credential."""
+
+    auth_method_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Additional keyword arguments to pass to the auth method."""
+
+    credential_param_key: str
+    """
+    The SOAP body parameter name under which the credential is passed in subsequent calls
+    (e.g. ``"sKey"`` for Xledger). The credential is injected via ``body_auth_params``
+    as ``{credential_param_key: credential}``.
+    """
+
+
+@dataclass(kw_only=True)
 class ParameterBasedAuthSettings:
     """
     Settings for parameter-based authentication.
@@ -99,6 +144,7 @@ class SoapLinkedServiceSettings(LinkedServiceSettings):
     Provide the appropriate auth settings object based on your auth_type:
 
     - ``AuthType.BASIC`` → ``basic``
+    - ``AuthType.BASIC_WITH_TOKEN_EXCHANGE`` → ``basic_with_token_exchange``
     - ``AuthType.PARAMETER_BASED`` → ``parameter_based``
 
     Example:
@@ -137,6 +183,9 @@ class SoapLinkedServiceSettings(LinkedServiceSettings):
     # Auth-specific settings (provide one based on auth_type)
     basic: BasicAuthSettings | None = None
     """Settings for Basic authentication. Required when auth_type=AuthType.BASIC."""
+
+    basic_with_token_exchange: BasicWithTokenExchangeAuthSettings | None = None
+    """Settings for Basic + token exchange authentication. Required when auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE."""
 
     parameter_based: ParameterBasedAuthSettings | None = None
     """Settings for parameter-based authentication. Required when auth_type=AuthType.PARAMETER_BASED."""
@@ -207,6 +256,7 @@ class SoapLinkedService(
     settings: SoapLinkedServiceSettingsType
 
     _client: zeep.Client | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
+    _credential: str | None = field(default=None, init=False, repr=False, metadata={"serialize": False})
 
     @property
     def type(self) -> ResourceType:
@@ -239,15 +289,30 @@ class SoapLinkedService(
     @property
     def body_auth_params(self) -> dict[str, str]:
         """
-        Return the resolved authentication parameters for parameter-based auth.
+        Return keyword authentication parameters for SOAP method calls.
+
+        For BASIC_WITH_TOKEN_EXCHANGE auth, returns ``{credential_param_key: credential}``.
+        For PARAMETER_BASED auth, returns the configured body parameters.
 
         Returns:
-            dict[str, str]: Auth params for PARAMETER_BASED auth, empty dict otherwise.
-        """
-        if self.settings.auth_type != AuthType.PARAMETER_BASED:
-            return {}
+            dict[str, str]
 
-        return self._build_body_auth_params()
+        Raises:
+            ConnectionError: If auth_type is BASIC_WITH_TOKEN_EXCHANGE and no credential
+                is set (i.e. ``connect()`` has not been called).
+        """
+        if self.settings.auth_type == AuthType.BASIC_WITH_TOKEN_EXCHANGE:
+            if self._credential is None:
+                raise ConnectionError(
+                    message="No credential available. Call connect() first.",
+                    details={"type": self.type.value, "wsdl": self.settings.wsdl},
+                )
+            return {self.settings.basic_with_token_exchange.credential_param_key: self._credential}  # type: ignore[union-attr]
+
+        elif self.settings.auth_type == AuthType.PARAMETER_BASED:
+            return self._build_body_auth_params()
+
+        return {}
 
     def _init_client(self) -> zeep.Client:
         """
@@ -317,6 +382,55 @@ class SoapLinkedService(
             self.settings.basic.password,
         )
 
+    def _configure_basic_with_token_exchange_auth(self, client: zeep.Client) -> None:  # noqa: ARG002
+        """
+        Exchange credentials for a session token via a dedicated auth WSDL.
+
+        Opens a temporary HTTP Basic Auth session against ``auth_wsdl``, calls
+        ``auth_method`` to retrieve a session token, stores it in ``_credential``,
+        then closes the auth session. The token is injected into all subsequent
+        data calls via ``body_auth_params``. The ``client`` argument is unused —
+        the data WSDL client is not involved in the exchange.
+
+        Args:
+            client: Unused. Present for dispatch-table consistency with other auth handlers.
+
+        Raises:
+            LinkedServiceException: If basic_with_token_exchange settings are missing
+                or the credential exchange call fails.
+        """
+        if not self.settings.basic_with_token_exchange:
+            raise LinkedServiceException(
+                message="Basic with token exchange auth settings are missing in the linked service settings",
+                details={"type": self.type.value},
+            )
+
+        auth_settings = self.settings.basic_with_token_exchange
+        auth_session = requests.Session()
+        auth_session.auth = HTTPBasicAuth(auth_settings.username, auth_settings.password)
+        auth_transport = zeep.Transport(session=auth_session)  # type: ignore[no-untyped-call]
+
+        try:
+            auth_client = zeep.Client(wsdl=auth_settings.auth_wsdl, transport=auth_transport)  # type: ignore[no-untyped-call]
+            method = getattr(auth_client.service, auth_settings.auth_method)
+            self._credential = method(
+                auth_settings.username,
+                auth_settings.password,
+                **auth_settings.auth_method_kwargs,
+            )
+        except Exception as exc:
+            raise LinkedServiceException(
+                message=f"Credential exchange failed: {exc}",
+                details={
+                    "type": self.type.value,
+                    "auth_wsdl": auth_settings.auth_wsdl,
+                    "auth_method": auth_settings.auth_method,
+                    "error_type": type(exc).__name__,
+                },
+            ) from exc
+        finally:
+            auth_session.close()
+
     def _configure_parameter_based_auth(self, client: zeep.Client) -> None:  # noqa: ARG002
         """
         Validate that parameter-based auth settings are present.
@@ -358,6 +472,7 @@ class SoapLinkedService(
 
         handlers: dict[str, Any] = {
             AuthType.BASIC: self._configure_basic_auth,
+            AuthType.BASIC_WITH_TOKEN_EXCHANGE: self._configure_basic_with_token_exchange_auth,
             AuthType.PARAMETER_BASED: self._configure_parameter_based_auth,
         }
 
@@ -414,21 +529,22 @@ class SoapLinkedService(
                 self.connection.service,
                 self.settings.auth_test_method,
             )
-            body_auth_params = self.body_auth_params
-            method(**body_auth_params, **self.settings.auth_test_method_params)
+            method(**self.body_auth_params, **self.settings.auth_test_method_params)
             return True, ""
         except Exception as exc:
             return False, str(exc)
 
     def close(self) -> None:
         """
-        Close the underlying requests session and release the zeep Client.
+        Close the underlying requests session, release the zeep Client, and clear
+        the session credential.
 
         Safe to call multiple times.
         """
         if self._client is not None:
             self._client.transport.session.close()
             self._client = None
+        self._credential = None
 
     def _build_body_auth_params(self) -> dict[str, str]:
         """

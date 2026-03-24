@@ -135,11 +135,12 @@ class SoapDataset(
         Raises:
             ReadError | CreateError: If the SOAP call fails.
         """
-        auth_params = self.linked_service.body_auth_params or {}
-
         try:
             method = getattr(self.linked_service.connection.service, self.settings.method)
-            response = method(**auth_params, **self.settings.kwargs)
+            response = method(
+                **self.linked_service.body_auth_params,
+                **self.settings.kwargs,
+            )
         except Exception as exc:
             logger.exception("SOAP call failed")
             raise error_cls(
