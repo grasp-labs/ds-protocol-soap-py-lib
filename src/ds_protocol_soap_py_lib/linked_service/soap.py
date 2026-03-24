@@ -6,22 +6,33 @@ SOAP Linked Service
 
 This module implements a linked service for SOAP APIs.
 
+Three authentication types are supported:
+
+- ``AuthType.BASIC`` — HTTP Basic Auth on the transport.
+- ``AuthType.BASIC_WITH_TOKEN_EXCHANGE`` — HTTP Basic Auth used to call a SOAP method
+  on a dedicated auth WSDL, exchanging credentials for a session token. The token is
+  then injected as a keyword argument into all subsequent data calls.
+- ``AuthType.PARAMETER_BASED`` — credentials passed as SOAP body parameters per call.
+
 Example:
     >>> import uuid
     >>> from ds_protocol_soap_py_lib import SoapLinkedService, SoapLinkedServiceSettings
-    >>> from ds_protocol_soap_py_lib.linked_service.soap import BasicAuthSettings
+    >>> from ds_protocol_soap_py_lib.linked_service.soap import BasicWithTokenExchangeAuthSettings
     >>> from ds_protocol_soap_py_lib.enums import AuthType
     >>> linked_service = SoapLinkedService(
     ...     id=uuid.uuid4(),
     ...     name="example::linked_service",
     ...     version="1.0.0",
     ...     settings=SoapLinkedServiceSettings(
-    ...         wsdl="https://api.example.com?WSDL",
-    ...         auth_type=AuthType.BASIC,
-    ...         auth_test_method="SomeHealthCheckMethod",
-    ...         basic=BasicAuthSettings(
+    ...         wsdl="https://ws.example.com/Data.asmx?WSDL",
+    ...         auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+    ...         auth_test_method="Ping",
+    ...         basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+    ...             auth_wsdl="https://ws.example.com/Auth.asmx?WSDL",
     ...             username="user",
     ...             password="pass",
+    ...             auth_method="LogonKey",
+    ...             credential_param_key="sKey",
     ...         ),
     ...     ),
     ... )
@@ -71,9 +82,10 @@ class BasicWithTokenExchangeAuthSettings:
     """
     Settings for Basic + token exchange authentication.
 
-    Uses HTTP Basic Auth on the transport layer, then calls a SOAP method to
-    exchange credentials for a session token. Access the resolved token via
-    ``SoapLinkedService.token`` after ``connect()`` is called.
+    Uses HTTP Basic Auth to call a SOAP method on a dedicated auth WSDL,
+    exchanging credentials for a session token. The token is stored internally
+    in ``SoapLinkedService`` after ``connect()`` and injected automatically
+    as a keyword argument in all subsequent data calls via ``body_auth_params``.
     """
 
     auth_wsdl: str
@@ -132,6 +144,7 @@ class SoapLinkedServiceSettings(LinkedServiceSettings):
     Provide the appropriate auth settings object based on your auth_type:
 
     - ``AuthType.BASIC`` → ``basic``
+    - ``AuthType.BASIC_WITH_TOKEN_EXCHANGE`` → ``basic_with_token_exchange``
     - ``AuthType.PARAMETER_BASED`` → ``parameter_based``
 
     Example:
@@ -371,17 +384,20 @@ class SoapLinkedService(
 
     def _configure_basic_with_token_exchange_auth(self, client: zeep.Client) -> None:  # noqa: ARG002
         """
-        Configure HTTP Basic authentication on the transport, then exchange credentials
-        for a session token via a SOAP method call.
+        Exchange credentials for a session token via a dedicated auth WSDL.
 
-        The token is stored internally and accessible via ``SoapLinkedService.token``.
+        Opens a temporary HTTP Basic Auth session against ``auth_wsdl``, calls
+        ``auth_method`` to retrieve a session token, stores it in ``_credential``,
+        then closes the auth session. The token is injected into all subsequent
+        data calls via ``body_auth_params``. The ``client`` argument is unused —
+        the data WSDL client is not involved in the exchange.
 
         Args:
-            client: The zeep Client to configure.
+            client: Unused. Present for dispatch-table consistency with other auth handlers.
 
         Raises:
             LinkedServiceException: If basic_with_token_exchange settings are missing
-                or the token exchange SOAP call fails.
+                or the credential exchange call fails.
         """
         if not self.settings.basic_with_token_exchange:
             raise LinkedServiceException(
@@ -520,7 +536,8 @@ class SoapLinkedService(
 
     def close(self) -> None:
         """
-        Close the underlying requests session and release the zeep Client.
+        Close the underlying requests session, release the zeep Client, and clear
+        the session credential.
 
         Safe to call multiple times.
         """
