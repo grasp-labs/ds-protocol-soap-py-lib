@@ -10,15 +10,6 @@ keyword argument of ``ReceiveFile`` via ``body_auth_params``.
 
 The file content (``aFile``) and file name (``sFileName``) are dynamic per call
 and must be prepared before constructing the dataset settings.
-
-Mapping from workflow v1 ``typed_properties``:
-    - ``sKey``        → injected from ``linked_service._credential`` via ``body_auth_params``
-    - ``aFile``       → ``bytearray`` of encoded XML content, passed via kwargs
-    - ``sFileName``   → file name string, passed via kwargs
-    - ``iEntityCode`` → static, passed via kwargs
-    - ``sApplication``→ static, passed via kwargs
-    - ``sImportCode`` → static, passed via kwargs
-    - ``sUserName``   → static, passed via kwargs
 """
 
 from __future__ import annotations
