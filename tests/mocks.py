@@ -48,11 +48,11 @@ class ZeepService:
     ) -> None:
         self._responses: dict[str, Any] = responses or {}
         self._errors: dict[str, Exception] = errors or {}
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
     def __getattr__(self, name: str):  # type: ignore[override]
-        def method(**kwargs: Any) -> Any:
-            self.calls.append((name, kwargs))
+        def method(*args: Any, **kwargs: Any) -> Any:
+            self.calls.append((name, args, kwargs))
             if name in self._errors:
                 raise self._errors[name]
             return self._responses.get(name)

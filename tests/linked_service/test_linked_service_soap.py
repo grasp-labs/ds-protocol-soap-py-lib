@@ -30,6 +30,7 @@ from requests.auth import HTTPBasicAuth
 from ds_protocol_soap_py_lib.enums import AuthType
 from ds_protocol_soap_py_lib.linked_service.soap import (
     BasicAuthSettings,
+    BasicWithTokenExchangeAuthSettings,
     ParameterBasedAuthSettings,
     SoapLinkedService,
     SoapLinkedServiceSettings,
@@ -45,6 +46,7 @@ def make_service(
     auth_type: AuthType = AuthType.BASIC,
     basic: BasicAuthSettings | None = None,
     parameter_based: ParameterBasedAuthSettings | None = None,
+    basic_with_token_exchange: BasicWithTokenExchangeAuthSettings | None = None,
     auth_test_method: str | None = "Ping",
 ) -> SoapLinkedService:
     if auth_type == AuthType.BASIC and basic is None:
@@ -53,6 +55,14 @@ def make_service(
         parameter_based = ParameterBasedAuthSettings(
             auth_param_key1="apiKey",
             auth_param_value1="token",
+        )
+    if auth_type == AuthType.BASIC_WITH_TOKEN_EXCHANGE and basic_with_token_exchange is None:
+        basic_with_token_exchange = BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="user",
+            password="pass",
+            auth_method="Login",
+            credential_param_key="sKey",
         )
     return SoapLinkedService(
         id=uuid.uuid4(),
@@ -63,6 +73,7 @@ def make_service(
             auth_type=auth_type,
             basic=basic,
             parameter_based=parameter_based,
+            basic_with_token_exchange=basic_with_token_exchange,
             auth_test_method=auth_test_method,
         ),
     )
@@ -322,7 +333,30 @@ def test_test_connection_passes_body_auth_params_to_method() -> None:
     fake_service = ZeepService(responses={"Ping": None})
     service._client = ZeepClientStub(service=fake_service)  # type: ignore[assignment]
     service.test_connection()
-    assert fake_service.calls == [("Ping", {"apiKey": "my-token"})]
+    assert fake_service.calls == [("Ping", (), {"apiKey": "my-token"})]
+
+
+def test_test_connection_passes_credential_as_keyword_arg_for_token_exchange_auth() -> None:
+    """
+    It injects the credential as a keyword argument via body_auth_params for BASIC_WITH_TOKEN_EXCHANGE auth.
+    """
+    service = make_service(
+        auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+        basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="user",
+            password="pass",
+            auth_method="Login",
+            credential_param_key="sKey",
+        ),
+        auth_test_method="Ping",
+    )
+    fake_service = ZeepService(responses={"Ping": None})
+    service._client = ZeepClientStub(service=fake_service)  # type: ignore[assignment]
+    service._credential = "session-abc"
+    service.test_connection()
+
+    assert fake_service.calls == [("Ping", (), {"sKey": "session-abc"})]
 
 
 def test_test_connection_returns_false_with_reason_on_exception() -> None:
@@ -512,6 +546,42 @@ def test_body_auth_params_returns_params_for_three_pairs() -> None:
     }
 
 
+def test_body_auth_params_raises_connection_error_when_no_credential() -> None:
+    """
+    It raises ConnectionError for BASIC_WITH_TOKEN_EXCHANGE when connect() has not been called.
+    """
+    service = make_service(
+        auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+        basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="user",
+            password="pass",
+            auth_method="Login",
+            credential_param_key="sKey",
+        ),
+    )
+    with pytest.raises(ConnectionError):
+        _ = service.body_auth_params
+
+
+def test_body_auth_params_returns_credential_when_credential_param_key_set() -> None:
+    """
+    It returns {credential_param_key: credential} in body_auth_params when credential_param_key is set.
+    """
+    service = make_service(
+        auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+        basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="user",
+            password="pass",
+            auth_method="Login",
+            credential_param_key="sKey",
+        ),
+    )
+    service._credential = "session-abc"
+    assert service.body_auth_params == {"sKey": "session-abc"}
+
+
 def test_body_auth_params_omits_pairs_with_none_value() -> None:
     """
     It skips key/value pairs where the value is None.
@@ -526,3 +596,164 @@ def test_body_auth_params_omits_pairs_with_none_value() -> None:
         ),
     )
     assert service.body_auth_params == {"apiKey": "token123"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# connect() — BasicWithTokenExchange auth
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_connect_basic_with_token_exchange_uses_http_basic_auth_on_auth_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It configures HTTPBasicAuth on the temporary auth session, not the main client.
+    """
+    service = make_service(
+        auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+        basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="alice",
+            password="secret",
+            auth_method="Login",
+            credential_param_key="sKey",
+        ),
+        auth_test_method=None,
+    )
+    fake_auth_service = ZeepService(responses={"Login": "session-token"})
+    fake_auth_client = ZeepClientStub(service=fake_auth_service)
+    captured: dict = {}
+
+    def fake_zeep_client(wsdl, transport=None, **kwargs):  # type: ignore[no-untyped-def]
+        captured["transport"] = transport
+        return fake_auth_client
+
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", fake_zeep_client)
+    service.connect()
+
+    assert isinstance(captured["transport"].session.auth, HTTPBasicAuth)
+    assert captured["transport"].session.auth.username == "alice"
+    assert captured["transport"].session.auth.password == "secret"
+
+
+def test_connect_basic_with_token_exchange_does_not_set_auth_on_main_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It leaves the main data client's transport session without auth (credential is passed as arg).
+    """
+    service = make_service(
+        auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+        auth_test_method=None,
+    )
+    fake_data_client = ZeepClientStub()
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": "token"}))
+    monkeypatch.setattr(service, "_init_client", lambda: fake_data_client)
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert fake_data_client.transport.session.auth is None
+
+
+def test_connect_basic_with_token_exchange_calls_auth_method_with_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It calls the auth method with username and password as positional args.
+    """
+    service = make_service(
+        auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+        basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="alice",
+            password="secret",
+            auth_method="Login",
+            credential_param_key="sKey",
+        ),
+        auth_test_method=None,
+    )
+    fake_auth_service = ZeepService(responses={"Login": "session-token"})
+    fake_auth_client = ZeepClientStub(service=fake_auth_service)
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert fake_auth_service.calls == [("Login", ("alice", "secret"), {})]
+
+
+def test_connect_basic_with_token_exchange_passes_extra_kwargs_to_auth_method(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It passes auth_method_kwargs as keyword arguments alongside credentials.
+    """
+    service = make_service(
+        auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+        basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="alice",
+            password="secret",
+            auth_method="Login",
+            credential_param_key="sKey",
+            auth_method_kwargs={"database": "prod"},
+        ),
+        auth_test_method=None,
+    )
+    fake_auth_service = ZeepService(responses={"Login": "session-token"})
+    fake_auth_client = ZeepClientStub(service=fake_auth_service)
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert fake_auth_service.calls == [("Login", ("alice", "secret"), {"database": "prod"})]
+
+
+def test_connect_basic_with_token_exchange_stores_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It stores the credential returned by the auth method.
+    """
+    service = make_service(auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE, auth_test_method=None)
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": "abc-123"}))
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert service._credential == "abc-123"
+
+
+def test_credential_property_returns_none_before_connect() -> None:
+    """
+    It returns None before connect() is called.
+    """
+    service = make_service(auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE, auth_test_method=None)
+    assert service._credential is None
+
+
+def test_connect_basic_with_token_exchange_requires_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It raises LinkedServiceException when basic_with_token_exchange settings are missing.
+    """
+    service = make_service(auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE, auth_test_method=None)
+    service.settings.basic_with_token_exchange = None
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    with pytest.raises(LinkedServiceException):
+        service.connect()
+
+
+def test_connect_basic_with_token_exchange_raises_if_auth_method_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It raises LinkedServiceException when the credential exchange SOAP call fails.
+    """
+    service = make_service(auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE, auth_test_method=None)
+    fake_auth_client = ZeepClientStub(service=ZeepService(errors={"Login": Exception("invalid credentials")}))
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    with pytest.raises(LinkedServiceException):
+        service.connect()
+
+
+def test_close_resets_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It resets credential to None on close().
+    """
+    service = make_service(auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE, auth_test_method=None)
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": "abc-123"}))
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+    assert service._credential == "abc-123"
+    service.close()
+    assert service._credential is None

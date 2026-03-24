@@ -32,6 +32,7 @@ from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 from ds_protocol_soap_py_lib.dataset.soap import SoapDataset, SoapDatasetSettings
 from ds_protocol_soap_py_lib.enums import AuthType
 from ds_protocol_soap_py_lib.linked_service.soap import (
+    BasicWithTokenExchangeAuthSettings,
     ParameterBasedAuthSettings,
     SoapLinkedService,
     SoapLinkedServiceSettings,
@@ -46,8 +47,18 @@ from tests.mocks import ZeepClientStub, ZeepService
 def make_linked_service(
     auth_type: AuthType = AuthType.BASIC,
     parameter_based: ParameterBasedAuthSettings | None = None,
+    credential: str | None = None,
 ) -> SoapLinkedService:
-    return SoapLinkedService(
+    bwte = None
+    if auth_type == AuthType.BASIC_WITH_TOKEN_EXCHANGE:
+        bwte = BasicWithTokenExchangeAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="user",
+            password="pass",
+            auth_method="Login",
+            credential_param_key="sKey",
+        )
+    ls = SoapLinkedService(
         id=uuid.uuid4(),
         name="test::service",
         version="1.0.0",
@@ -56,8 +67,12 @@ def make_linked_service(
             auth_type=auth_type,
             auth_test_method="Ping",
             parameter_based=parameter_based,
+            basic_with_token_exchange=bwte,
         ),
     )
+    if credential is not None:
+        ls._credential = credential
+    return ls
 
 
 def make_dataset(
@@ -154,7 +169,7 @@ def test_read_forwards_kwargs_to_soap_method() -> None:
     with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=None):
         dataset.read()
 
-    _, call_kwargs = fake_service.calls[0]
+    _, _, call_kwargs = fake_service.calls[0]
     assert call_kwargs["Page"] == "1"
 
 
@@ -177,8 +192,43 @@ def test_read_injects_parameter_based_auth_params() -> None:
     with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=None):
         dataset.read()
 
-    _, call_kwargs = fake_service.calls[0]
+    _, _, call_kwargs = fake_service.calls[0]
     assert call_kwargs["apiKey"] == "my-token"
+
+
+def test_read_injects_credential_as_keyword_arg_when_credential_param_key_set() -> None:
+    """
+    It passes the credential as a keyword arg when credential_param_key is configured.
+    """
+    ls = SoapLinkedService(
+        id=uuid.uuid4(),
+        name="test::service",
+        version="1.0.0",
+        settings=SoapLinkedServiceSettings(
+            wsdl="https://example.com?wsdl",
+            auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE,
+            auth_test_method=None,
+            basic_with_token_exchange=BasicWithTokenExchangeAuthSettings(
+                auth_wsdl="https://auth.example.com?wsdl",
+                username="user",
+                password="pass",
+                auth_method="Login",
+                credential_param_key="sKey",
+            ),
+        ),
+    )
+    ls._credential = "session-abc"
+    dataset, fake_service = make_dataset(
+        method="GetOrders",
+        linked_service=ls,
+        soap_service=ZeepService(responses={"GetOrders": None}),
+    )
+    with patch("ds_protocol_soap_py_lib.dataset.soap.serialize_object", return_value=None):
+        dataset.read()
+
+    _, call_args, call_kwargs = fake_service.calls[0]
+    assert call_args == ()
+    assert call_kwargs["sKey"] == "session-abc"
 
 
 def test_read_raises_read_error_when_deserializer_is_none() -> None:
@@ -283,7 +333,7 @@ def test_create_forwards_kwargs_to_soap_method() -> None:
     dataset.input = SAMPLE_DF
     dataset.create()
 
-    _, call_kwargs = fake_service.calls[0]
+    _, _, call_kwargs = fake_service.calls[0]
     assert call_kwargs["Version"] == "2"
 
 
@@ -302,7 +352,7 @@ def test_create_injects_parameter_based_auth_params() -> None:
     dataset.input = SAMPLE_DF
     dataset.create()
 
-    _, call_kwargs = fake_service.calls[0]
+    _, _, call_kwargs = fake_service.calls[0]
     assert call_kwargs["apiKey"] == "my-token"
 
 
