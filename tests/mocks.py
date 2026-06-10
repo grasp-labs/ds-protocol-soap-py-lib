@@ -69,6 +69,7 @@ class ZeepClientStub:
 
     transport: ZeepTransport = field(default_factory=ZeepTransport)
     service: ZeepService = field(default_factory=ZeepService)
+    settings: Any = None
     types: dict[str, Any] = field(default_factory=dict)
 
     def get_type(self, name: str) -> Any:

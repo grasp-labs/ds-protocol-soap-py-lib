@@ -157,6 +157,12 @@ class CookieSessionAuthSettings:
     session_check_method_kwargs: dict[str, Any] = field(default_factory=dict)
     """Optional keyword arguments for ``session_check_method``."""
 
+    cookie_name: str | None = "ASP.NET_SessionId"
+    """
+    Optional HTTP cookie name for SOAP services that return the session id from
+    the login method instead of setting it only through ``Set-Cookie``.
+    """
+
 
 @dataclass(kw_only=True)
 class ParameterBasedAuthSettings:
@@ -504,7 +510,11 @@ class SoapLinkedService(
 
         auth_settings = self.settings.cookie_session
         try:
-            auth_client = zeep.Client(wsdl=auth_settings.auth_wsdl, transport=client.transport)  # type: ignore[no-untyped-call]
+            auth_client = zeep.Client(  # type: ignore[no-untyped-call]
+                wsdl=auth_settings.auth_wsdl,
+                transport=client.transport,
+                settings=getattr(client, "settings", None),
+            )
             credential_type = auth_client.get_type(auth_settings.credential_type)  # type: ignore[no-untyped-call]
             credential_kwargs = {
                 "ApplicationId": auth_settings.application_id,
@@ -516,16 +526,28 @@ class SoapLinkedService(
 
             credential = credential_type(**credential_kwargs)
             login_method = getattr(auth_client.service, auth_settings.auth_method)
-            login_method(
+            login_result = login_method(
                 **{
                     auth_settings.credential_param_name: credential,
                     **auth_settings.auth_method_kwargs,
                 },
             )
+            self._store_cookie_session_login_result(client, auth_settings, login_result)
 
             if auth_settings.session_check_method:
                 check_method = getattr(auth_client.service, auth_settings.session_check_method)
-                check_method(**auth_settings.session_check_method_kwargs)
+                session_is_valid = check_method(**auth_settings.session_check_method_kwargs)
+                if session_is_valid is False:
+                    raise LinkedServiceException(
+                        message="Cookie session validation failed",
+                        details={
+                            "type": self.type.value,
+                            "auth_wsdl": auth_settings.auth_wsdl,
+                            "session_check_method": auth_settings.session_check_method,
+                        },
+                    )
+        except LinkedServiceException:
+            raise
         except Exception as exc:
             raise LinkedServiceException(
                 message=f"Cookie session authentication failed: {exc}",
@@ -536,6 +558,32 @@ class SoapLinkedService(
                     "error_type": type(exc).__name__,
                 },
             ) from exc
+
+    def _store_cookie_session_login_result(
+        self,
+        client: zeep.Client,
+        auth_settings: CookieSessionAuthSettings,
+        login_result: Any,
+    ) -> None:
+        """
+        Persist string login results as HTTP session cookies when configured.
+
+        Some SOAP services set the session through ``Set-Cookie`` while others
+        return the session id from the login method and expect clients to set
+        the cookie manually. If the cookie already exists, the response header
+        has won and this helper leaves it untouched.
+        """
+        if not auth_settings.cookie_name or not isinstance(login_result, str) or not login_result:
+            return
+
+        cookies = client.transport.session.cookies
+        if cookies.get(auth_settings.cookie_name):
+            return
+
+        if hasattr(cookies, "set"):
+            cookies.set(auth_settings.cookie_name, login_result)
+        else:
+            cookies[auth_settings.cookie_name] = login_result
 
     def _configure_parameter_based_auth(self, client: zeep.Client) -> None:  # noqa: ARG002
         """

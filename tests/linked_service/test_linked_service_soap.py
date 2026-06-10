@@ -210,16 +210,18 @@ def test_connect_parameter_based_raises_if_settings_missing(monkeypatch: pytest.
 
 def test_connect_cookie_session_uses_main_transport_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    It authenticates through the auth WSDL using the main client's HTTP session.
+    It authenticates through the auth WSDL using the main client's HTTP session and zeep settings.
     """
     service = make_service(auth_type=AuthType.COOKIE_SESSION, auth_test_method=None)
-    fake_data_client = ZeepClientStub()
+    zeep_settings = object()
+    fake_data_client = ZeepClientStub(settings=zeep_settings)
     fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": None}))
     captured: dict = {}
 
     def fake_zeep_client(wsdl, transport=None, **kwargs):  # type: ignore[no-untyped-def]
         captured["wsdl"] = wsdl
         captured["transport"] = transport
+        captured["settings"] = kwargs["settings"]
         return fake_auth_client
 
     monkeypatch.setattr(service, "_init_client", lambda: fake_data_client)
@@ -228,6 +230,7 @@ def test_connect_cookie_session_uses_main_transport_session(monkeypatch: pytest.
 
     assert captured["wsdl"] == "https://auth.example.com?wsdl"
     assert captured["transport"].session is fake_data_client.transport.session
+    assert captured["settings"] is zeep_settings
 
 
 def test_connect_cookie_session_calls_login_with_credential_object(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -344,6 +347,73 @@ def test_connect_cookie_session_calls_session_check_method(monkeypatch: pytest.M
         ),
         ("HasSession", (), {}),
     ]
+
+
+def test_connect_cookie_session_stores_string_login_result_as_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It supports services that return the session id from Login instead of only setting Set-Cookie.
+    """
+    service = make_service(auth_type=AuthType.COOKIE_SESSION, auth_test_method=None)
+    fake_data_client = ZeepClientStub()
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": "session-id"}))
+    monkeypatch.setattr(service, "_init_client", lambda: fake_data_client)
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert fake_data_client.transport.session.cookies["ASP.NET_SessionId"] == "session-id"
+
+
+def test_connect_cookie_session_stores_login_result_on_requests_cookie_jar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It stores returned session ids on the real requests cookie-jar API.
+    """
+    service = make_service(auth_type=AuthType.COOKIE_SESSION, auth_test_method=None)
+    fake_data_client = ZeepClientStub()
+    fake_data_client.transport.session.cookies = requests.cookies.RequestsCookieJar()  # type: ignore[assignment]
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": "session-id"}))
+    monkeypatch.setattr(service, "_init_client", lambda: fake_data_client)
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert fake_data_client.transport.session.cookies.get("ASP.NET_SessionId") == "session-id"
+
+
+def test_connect_cookie_session_does_not_overwrite_existing_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It preserves cookies already captured from Set-Cookie response headers.
+    """
+    service = make_service(auth_type=AuthType.COOKIE_SESSION, auth_test_method=None)
+    fake_data_client = ZeepClientStub()
+    fake_data_client.transport.session.cookies["ASP.NET_SessionId"] = "header-session-id"
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": "body-session-id"}))
+    monkeypatch.setattr(service, "_init_client", lambda: fake_data_client)
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert fake_data_client.transport.session.cookies["ASP.NET_SessionId"] == "header-session-id"
+
+
+def test_connect_cookie_session_raises_when_session_check_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    It treats an explicit false session check as failed authentication.
+    """
+    service = make_service(
+        auth_type=AuthType.COOKIE_SESSION,
+        cookie_session=CookieSessionAuthSettings(
+            auth_wsdl="https://auth.example.com?wsdl",
+            username="alice@example.com",
+            password="secret",
+            application_id="application-guid",
+            session_check_method="HasSession",
+        ),
+        auth_test_method=None,
+    )
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": None, "HasSession": False}))
+    monkeypatch.setattr(service, "_init_client", lambda: ZeepClientStub())
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+
+    with pytest.raises(LinkedServiceException, match="Cookie session validation failed"):
+        service.connect()
 
 
 def test_connect_cookie_session_requires_settings(monkeypatch: pytest.MonkeyPatch) -> None:
