@@ -6,12 +6,14 @@ SOAP Linked Service
 
 This module implements a linked service for SOAP APIs.
 
-Three authentication types are supported:
+Four authentication types are supported:
 
 - ``AuthType.BASIC`` — HTTP Basic Auth on the transport.
 - ``AuthType.BASIC_WITH_TOKEN_EXCHANGE`` — HTTP Basic Auth used to call a SOAP method
   on a dedicated auth WSDL, exchanging credentials for a session token. The token is
   then injected as a keyword argument into all subsequent data calls.
+- ``AuthType.COOKIE_SESSION`` — calls a SOAP login method on an auth WSDL and keeps
+  the returned HTTP session cookie on the shared transport session.
 - ``AuthType.PARAMETER_BASED`` — credentials passed as SOAP body parameters per call.
 
 Example:
@@ -112,6 +114,51 @@ class BasicWithTokenExchangeAuthSettings:
 
 
 @dataclass(kw_only=True)
+class CookieSessionAuthSettings:
+    """
+    Settings for SOAP cookie-session authentication.
+
+    Calls a login operation on an authentication WSDL using the same underlying
+    HTTP session as the data client. Services such as ASP.NET ASMX APIs often
+    set a session cookie (for example ``ASP.NET_SessionId``) during login; the
+    shared session keeps that cookie available for subsequent SOAP calls.
+    """
+
+    auth_wsdl: str
+    """The WSDL endpoint used for the login call."""
+
+    username: str
+    """The username included in the credential object."""
+
+    password: str = field(metadata={"mask": True})
+    """The password included in the credential object."""
+
+    application_id: str
+    """The application identifier included in the credential object."""
+
+    auth_method: str = "Login"
+    """The SOAP operation name to call for login."""
+
+    credential_type: str = "ns0:Credential"
+    """The zeep type name used to construct the SOAP credential object."""
+
+    credential_param_name: str = "credential"
+    """The SOAP parameter name that receives the credential object."""
+
+    identity_id: str | None = None
+    """Optional identity identifier included in the credential object."""
+
+    auth_method_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Additional keyword arguments to pass to the login method."""
+
+    session_check_method: str | None = None
+    """Optional auth-service method to call after login, e.g. ``HasSession``."""
+
+    session_check_method_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Optional keyword arguments for ``session_check_method``."""
+
+
+@dataclass(kw_only=True)
 class ParameterBasedAuthSettings:
     """
     Settings for parameter-based authentication.
@@ -145,6 +192,7 @@ class SoapLinkedServiceSettings(LinkedServiceSettings):
 
     - ``AuthType.BASIC`` → ``basic``
     - ``AuthType.BASIC_WITH_TOKEN_EXCHANGE`` → ``basic_with_token_exchange``
+    - ``AuthType.COOKIE_SESSION`` → ``cookie_session``
     - ``AuthType.PARAMETER_BASED`` → ``parameter_based``
 
     Example:
@@ -186,6 +234,9 @@ class SoapLinkedServiceSettings(LinkedServiceSettings):
 
     basic_with_token_exchange: BasicWithTokenExchangeAuthSettings | None = None
     """Settings for Basic + token exchange authentication. Required when auth_type=AuthType.BASIC_WITH_TOKEN_EXCHANGE."""
+
+    cookie_session: CookieSessionAuthSettings | None = None
+    """Settings for cookie-session authentication. Required when auth_type=AuthType.COOKIE_SESSION."""
 
     parameter_based: ParameterBasedAuthSettings | None = None
     """Settings for parameter-based authentication. Required when auth_type=AuthType.PARAMETER_BASED."""
@@ -431,6 +482,61 @@ class SoapLinkedService(
         finally:
             auth_session.close()
 
+    def _configure_cookie_session_auth(self, client: zeep.Client) -> None:
+        """
+        Authenticate through a SOAP login call that sets an HTTP session cookie.
+
+        The auth client uses the same requests session as the data client. This
+        preserves cookies set by the login response for subsequent service calls.
+
+        Args:
+            client: The data WSDL client whose transport session should receive cookies.
+
+        Raises:
+            LinkedServiceException: If cookie session settings are missing or
+                the login/session-check call fails.
+        """
+        if not self.settings.cookie_session:
+            raise LinkedServiceException(
+                message="Cookie session auth settings are missing in the linked service settings",
+                details={"type": self.type.value},
+            )
+
+        auth_settings = self.settings.cookie_session
+        try:
+            auth_client = zeep.Client(wsdl=auth_settings.auth_wsdl, transport=client.transport)  # type: ignore[no-untyped-call]
+            credential_type = auth_client.get_type(auth_settings.credential_type)  # type: ignore[no-untyped-call]
+            credential_kwargs = {
+                "ApplicationId": auth_settings.application_id,
+                "Username": auth_settings.username,
+                "Password": auth_settings.password,
+            }
+            if auth_settings.identity_id:
+                credential_kwargs["IdentityId"] = auth_settings.identity_id
+
+            credential = credential_type(**credential_kwargs)
+            login_method = getattr(auth_client.service, auth_settings.auth_method)
+            login_method(
+                **{
+                    auth_settings.credential_param_name: credential,
+                    **auth_settings.auth_method_kwargs,
+                },
+            )
+
+            if auth_settings.session_check_method:
+                check_method = getattr(auth_client.service, auth_settings.session_check_method)
+                check_method(**auth_settings.session_check_method_kwargs)
+        except Exception as exc:
+            raise LinkedServiceException(
+                message=f"Cookie session authentication failed: {exc}",
+                details={
+                    "type": self.type.value,
+                    "auth_wsdl": auth_settings.auth_wsdl,
+                    "auth_method": auth_settings.auth_method,
+                    "error_type": type(exc).__name__,
+                },
+            ) from exc
+
     def _configure_parameter_based_auth(self, client: zeep.Client) -> None:  # noqa: ARG002
         """
         Validate that parameter-based auth settings are present.
@@ -473,6 +579,7 @@ class SoapLinkedService(
         handlers: dict[str, Any] = {
             AuthType.BASIC: self._configure_basic_auth,
             AuthType.BASIC_WITH_TOKEN_EXCHANGE: self._configure_basic_with_token_exchange_auth,
+            AuthType.COOKIE_SESSION: self._configure_cookie_session_auth,
             AuthType.PARAMETER_BASED: self._configure_parameter_based_auth,
         }
 

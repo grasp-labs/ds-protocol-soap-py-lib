@@ -21,6 +21,7 @@ class AuthType(StrEnum):
 
     BASIC = "Basic"
     BASIC_WITH_TOKEN_EXCHANGE = "BasicWithTokenExchange"  # nosec B105
+    COOKIE_SESSION = "CookieSession"  # nosec B105
     PARAMETER_BASED = "ParameterBased"
 
 

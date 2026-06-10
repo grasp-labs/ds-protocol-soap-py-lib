@@ -32,6 +32,7 @@ Example:
 
 from .soap import (
     BasicAuthSettings,
+    CookieSessionAuthSettings,
     ParameterBasedAuthSettings,
     SoapLinkedService,
     SoapLinkedServiceSettings,
@@ -39,6 +40,7 @@ from .soap import (
 
 __all__ = [
     "BasicAuthSettings",
+    "CookieSessionAuthSettings",
     "ParameterBasedAuthSettings",
     "SoapLinkedService",
     "SoapLinkedServiceSettings",
