@@ -69,9 +69,11 @@ def make_service(
     if auth_type == AuthType.COOKIE_SESSION and cookie_session is None:
         cookie_session = CookieSessionAuthSettings(
             auth_wsdl="https://auth.example.com?wsdl",
-            username="user@example.com",
-            password="pass",
-            application_id="app-guid",
+            credentials={
+                "ApplicationId": "app-guid",
+                "Username": "user@example.com",
+                "Password": "pass",
+            },
         )
     return SoapLinkedService(
         id=uuid.uuid4(),
@@ -241,10 +243,12 @@ def test_connect_cookie_session_calls_login_with_credential_object(monkeypatch: 
         auth_type=AuthType.COOKIE_SESSION,
         cookie_session=CookieSessionAuthSettings(
             auth_wsdl="https://auth.example.com?wsdl",
-            username="alice@example.com",
-            password="secret",
-            application_id="application-guid",
-            identity_id="identity-guid",
+            credentials={
+                "ApplicationId": "application-guid",
+                "Username": "alice@example.com",
+                "Password": "secret",
+                "IdentityId": "identity-guid",
+            },
         ),
         auth_test_method=None,
     )
@@ -279,9 +283,11 @@ def test_connect_cookie_session_supports_custom_credential_metadata(monkeypatch:
         auth_type=AuthType.COOKIE_SESSION,
         cookie_session=CookieSessionAuthSettings(
             auth_wsdl="https://auth.example.com?wsdl",
-            username="alice@example.com",
-            password="secret",
-            application_id="application-guid",
+            credentials={
+                "ApplicationId": "application-guid",
+                "Username": "alice@example.com",
+                "Password": "secret",
+            },
             credential_type="{http://24sevenOffice.com/webservices}Credential",
             credential_param_name="requestCredential",
             auth_method_kwargs={"locale": "nb-NO"},
@@ -319,9 +325,11 @@ def test_connect_cookie_session_calls_session_check_method(monkeypatch: pytest.M
         auth_type=AuthType.COOKIE_SESSION,
         cookie_session=CookieSessionAuthSettings(
             auth_wsdl="https://auth.example.com?wsdl",
-            username="alice@example.com",
-            password="secret",
-            application_id="application-guid",
+            credentials={
+                "ApplicationId": "application-guid",
+                "Username": "alice@example.com",
+                "Password": "secret",
+            },
             session_check_method="HasSession",
         ),
         auth_test_method=None,
@@ -401,9 +409,11 @@ def test_connect_cookie_session_raises_when_session_check_returns_false(monkeypa
         auth_type=AuthType.COOKIE_SESSION,
         cookie_session=CookieSessionAuthSettings(
             auth_wsdl="https://auth.example.com?wsdl",
-            username="alice@example.com",
-            password="secret",
-            application_id="application-guid",
+            credentials={
+                "ApplicationId": "application-guid",
+                "Username": "alice@example.com",
+                "Password": "secret",
+            },
             session_check_method="HasSession",
         ),
         auth_test_method=None,

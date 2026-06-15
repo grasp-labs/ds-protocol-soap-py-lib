@@ -127,14 +127,12 @@ class CookieSessionAuthSettings:
     auth_wsdl: str
     """The WSDL endpoint used for the login call."""
 
-    username: str
-    """The username included in the credential object."""
-
-    password: str = field(metadata={"mask": True})
-    """The password included in the credential object."""
-
-    application_id: str
-    """The application identifier included in the credential object."""
+    credentials: dict[str, Any] = field(metadata={"mask": True})
+    """
+    Field/value mapping used to construct the SOAP credential object passed to the
+    login method. Keys must match the fields exposed by ``credential_type`` in the
+    authentication WSDL, for example ``ApplicationId``, ``Username``, and ``Password``.
+    """
 
     auth_method: str = "Login"
     """The SOAP operation name to call for login."""
@@ -144,9 +142,6 @@ class CookieSessionAuthSettings:
 
     credential_param_name: str = "credential"
     """The SOAP parameter name that receives the credential object."""
-
-    identity_id: str | None = None
-    """Optional identity identifier included in the credential object."""
 
     auth_method_kwargs: dict[str, Any] = field(default_factory=dict)
     """Additional keyword arguments to pass to the login method."""
@@ -516,15 +511,7 @@ class SoapLinkedService(
                 settings=getattr(client, "settings", None),
             )
             credential_type = auth_client.get_type(auth_settings.credential_type)  # type: ignore[no-untyped-call]
-            credential_kwargs = {
-                "ApplicationId": auth_settings.application_id,
-                "Username": auth_settings.username,
-                "Password": auth_settings.password,
-            }
-            if auth_settings.identity_id:
-                credential_kwargs["IdentityId"] = auth_settings.identity_id
-
-            credential = credential_type(**credential_kwargs)
+            credential = credential_type(**auth_settings.credentials)
             login_method = getattr(auth_client.service, auth_settings.auth_method)
             login_result = login_method(
                 **{
@@ -665,6 +652,7 @@ class SoapLinkedService(
                     "auth_test_method": self.settings.auth_test_method,
                 },
             )
+
 
     def test_connection(self) -> tuple[bool, str]:
         """
