@@ -653,7 +653,6 @@ class SoapLinkedService(
                 },
             )
 
-
     def test_connection(self) -> tuple[bool, str]:
         """
         Verify the connection to the SOAP API by calling ``auth_test_method``.
