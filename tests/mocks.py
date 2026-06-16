@@ -22,6 +22,7 @@ class ZeepSession:
 
     auth: Any = None
     closed: bool = False
+    cookies: dict[str, str] = field(default_factory=dict)
 
     def close(self) -> None:
         self.closed = True
@@ -68,3 +69,14 @@ class ZeepClientStub:
 
     transport: ZeepTransport = field(default_factory=ZeepTransport)
     service: ZeepService = field(default_factory=ZeepService)
+    settings: Any = None
+    types: dict[str, Any] = field(default_factory=dict)
+
+    def get_type(self, name: str) -> Any:
+        if name in self.types:
+            return self.types[name]
+
+        def factory(**kwargs: Any) -> dict[str, Any]:
+            return {"__type__": name, **kwargs}
+
+        return factory

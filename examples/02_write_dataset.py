@@ -53,10 +53,12 @@ def main() -> pd.DataFrame:
         ),
     )
 
-    rows = pd.DataFrame([
-        {"Id": 1, "Name": "Alice"},
-        {"Id": 2, "Name": "Bob"},
-    ])
+    rows = pd.DataFrame(
+        [
+            {"Id": 1, "Name": "Alice"},
+            {"Id": 2, "Name": "Bob"},
+        ]
+    )
 
     try:
         dataset.linked_service.connect()
