@@ -57,6 +57,7 @@ from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     LinkedServiceException,
 )
 from requests.auth import HTTPBasicAuth
+from requests.cookies import RequestsCookieJar
 from zeep.cache import Base
 
 from ..enums import AuthType, ResourceType
@@ -573,8 +574,9 @@ class SoapLinkedService(
             return None
 
         cookies = client.transport.session.cookies
-        if hasattr(cookies, "get"):
-            value = cookies.get(cookie_name)
+        if isinstance(cookies, RequestsCookieJar):
+            auth_domain = urlparse(auth_settings.auth_wsdl).hostname
+            value = cookies.get(cookie_name, domain=auth_domain) if auth_domain else cookies.get(cookie_name)
             if isinstance(value, str) and value:
                 return value
 

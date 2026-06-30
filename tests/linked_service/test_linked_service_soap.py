@@ -405,6 +405,29 @@ def test_connect_cookie_session_sets_cookie_for_data_service_host(monkeypatch: p
     assert cookie_jar.get("ASP.NET_SessionId", domain="data.example.com") == "data-host-session"
 
 
+def test_connect_cookie_session_copies_auth_host_cookie_when_login_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    When Login does not return a string, the session id is read from the auth-host
+    cookie and stored on the data host even if the jar already holds a same-named
+    WSDL-fetch cookie on the data host.
+    """
+    service = make_service(auth_type=AuthType.COOKIE_SESSION, auth_test_method=None)
+    service.settings.wsdl = "https://data.example.com/ProjectService.asmx?wsdl"
+    fake_data_client = ZeepClientStub()
+    cookie_jar = requests.cookies.RequestsCookieJar()
+    cookie_jar.set("ASP.NET_SessionId", "wsdl-session", domain="data.example.com", path="/")
+    cookie_jar.set("ASP.NET_SessionId", "auth-host-session", domain="auth.example.com", path="/")
+    fake_data_client.transport.session.cookies = cookie_jar  # type: ignore[assignment]
+    fake_auth_client = ZeepClientStub(service=ZeepService(responses={"Login": None}))
+    monkeypatch.setattr(service, "_init_client", lambda: fake_data_client)
+    monkeypatch.setattr("ds_protocol_soap_py_lib.linked_service.soap.zeep.Client", lambda **kwargs: fake_auth_client)
+    service.connect()
+
+    assert cookie_jar.get("ASP.NET_SessionId", domain="data.example.com") == "auth-host-session"
+
+
 def test_connect_cookie_session_raises_when_session_check_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     It treats an explicit false session check as failed authentication.
