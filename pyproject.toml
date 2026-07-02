@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ds-protocol-soap-py-lib"
-version = "0.1.0-alpha.3"
+version = "0.1.0"
 description = "A Python package from the DS library collection"
 dependencies = [
     "ds-common-logger-py-lib>=0.1.0a5",
@@ -53,6 +53,7 @@ dev = [
     "sphinx>=7.1.0",
     "sphinx-autoapi>=3.0.0",
     "sphinx-material>=0.0.35",
+    "python-dotenv>=1.0.0",
 ]
 test = [
     "pytest>=7.4.0",

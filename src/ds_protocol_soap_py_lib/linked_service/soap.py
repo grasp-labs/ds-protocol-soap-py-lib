@@ -43,6 +43,7 @@ Example:
 
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
+from urllib.parse import urlparse
 
 import requests
 import zeep
@@ -56,6 +57,7 @@ from ds_resource_plugin_py_lib.common.resource.linked_service.errors import (
     LinkedServiceException,
 )
 from requests.auth import HTTPBasicAuth
+from requests.cookies import RequestsCookieJar
 from zeep.cache import Base
 
 from ..enums import AuthType, ResourceType
@@ -156,6 +158,15 @@ class CookieSessionAuthSettings:
     """
     Optional HTTP cookie name for SOAP services that return the session id from
     the login method instead of setting it only through ``Set-Cookie``.
+    """
+
+    cookie_domain: str | None = None
+    """
+    Optional cookie domain for the data service host.
+
+    When omitted, the hostname from the linked service ``wsdl`` is used. This is
+    required when the auth WSDL and data WSDL run on different subdomains, for
+    example ``api.example.com`` vs ``webservices.example.com``.
     """
 
 
@@ -546,6 +557,41 @@ class SoapLinkedService(
                 },
             ) from exc
 
+    def _resolve_cookie_session_id(
+        self,
+        client: zeep.Client,
+        auth_settings: CookieSessionAuthSettings,
+        login_result: Any,
+    ) -> str | None:
+        """
+        Resolve the session id from the login response or auth-host cookie jar.
+        """
+        if isinstance(login_result, str) and login_result:
+            return login_result
+
+        cookie_name = auth_settings.cookie_name
+        if not cookie_name:
+            return None
+
+        cookies = client.transport.session.cookies
+        if isinstance(cookies, RequestsCookieJar):
+            auth_domain = urlparse(auth_settings.auth_wsdl).hostname
+            value = cookies.get(cookie_name, domain=auth_domain) if auth_domain else cookies.get(cookie_name)
+            if isinstance(value, str) and value:
+                return value
+
+        if isinstance(cookies, dict):
+            value = cookies.get(cookie_name)
+            if isinstance(value, str) and value:
+                return value
+
+        return None
+
+    def _data_service_cookie_domain(self, auth_settings: CookieSessionAuthSettings) -> str | None:
+        if auth_settings.cookie_domain:
+            return auth_settings.cookie_domain
+        return urlparse(self.settings.wsdl).hostname
+
     def _store_cookie_session_login_result(
         self,
         client: zeep.Client,
@@ -553,24 +599,32 @@ class SoapLinkedService(
         login_result: Any,
     ) -> None:
         """
-        Persist string login results as HTTP session cookies when configured.
+        Persist the session id as an HTTP cookie for the data service host.
 
-        Some SOAP services set the session through ``Set-Cookie`` while others
-        return the session id from the login method and expect clients to set
-        the cookie manually. If the cookie already exists, the response header
-        has won and this helper leaves it untouched.
+        Some SOAP services set the session through ``Set-Cookie`` on the auth
+        host while the data service runs on another subdomain. The session id
+        must therefore be attached for the data WSDL hostname before subsequent
+        service calls are made.
         """
-        if not auth_settings.cookie_name or not isinstance(login_result, str) or not login_result:
+        cookie_name = auth_settings.cookie_name
+        if not cookie_name:
+            return
+
+        session_id = self._resolve_cookie_session_id(client, auth_settings, login_result)
+        if not session_id:
             return
 
         cookies = client.transport.session.cookies
-        if cookies.get(auth_settings.cookie_name):
-            return
+        cookie_domain = self._data_service_cookie_domain(auth_settings)
 
         if hasattr(cookies, "set"):
-            cookies.set(auth_settings.cookie_name, login_result)
-        else:
-            cookies[auth_settings.cookie_name] = login_result
+            if cookie_domain:
+                cookies.set(cookie_name, session_id, domain=cookie_domain, path="/")
+            else:
+                cookies.set(cookie_name, session_id)
+            return
+
+        cookies[cookie_name] = session_id
 
     def _configure_parameter_based_auth(self, client: zeep.Client) -> None:  # noqa: ARG002
         """
